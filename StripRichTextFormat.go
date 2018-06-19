@@ -1,6 +1,7 @@
 package rtf
 
 import (
+	"bytes"
 	"golang.org/x/text/encoding/charmap"
 	"regexp"
 	"strconv"
@@ -385,12 +386,7 @@ func StripRichTextFormat(inputRtf string) string {
 	curskip := 0
 
 	matches := rtfRegex.FindAllStringSubmatch(inputRtf, -1)
-
-	if len(matches) == 0 {
-		return inputRtf
-	}
-
-	var returnString string
+	var returnBuffer bytes.Buffer
 
 	for _, match := range matches {
 		word := match[1]
@@ -400,7 +396,14 @@ func StripRichTextFormat(inputRtf string) string {
 		brace := match[5]
 		tchar := match[6]
 
-		if brace != "" {
+		switch {
+		case tchar != "":
+			if curskip > 0 {
+				curskip -= 1
+			} else if !ignorable {
+				returnBuffer.WriteString(tchar)
+			}
+		case brace != "":
 			curskip = 0
 			if brace == "{" {
 				stack = append(
@@ -412,26 +415,27 @@ func StripRichTextFormat(inputRtf string) string {
 				ucskip = entry.NumberOfCharactersToSkip
 				ignorable = entry.Ignorable
 			}
-		} else if character != "" {
+		case character != "":
 			curskip = 0
 			if character == "~" {
 				if !ignorable {
-					returnString += "\xA0"
+					returnBuffer.WriteString("\xA0")
 				}
 			} else if strings.Contains("{}\\", character) {
 				if !ignorable {
-					returnString += character
+					returnBuffer.WriteString(character)
 				}
 			} else if character == "*" {
 				ignorable = true
 			}
-		} else if word != "" {
+		case word != "":
 			curskip = 0
 			if destinations[word] {
 				ignorable = true
 			} else if ignorable {
 			} else if specialCharacters[word] != "" {
-				returnString += specialCharacters[word]
+				returnBuffer.WriteString(
+					specialCharacters[word])
 			} else if word == "ansicpg" {
 				charMap = charmaps[arg]
 			} else if word == "uc" {
@@ -442,28 +446,22 @@ func StripRichTextFormat(inputRtf string) string {
 				if c < 0 {
 					c += 0x10000
 				}
-				returnString += string(rune(c))
+				returnBuffer.WriteRune(rune(c))
 				curskip = ucskip
 			}
-		} else if hex != "" {
+		case hex != "":
 			if curskip > 0 {
 				curskip -= 1
 			} else if !ignorable {
 				c, _ := strconv.ParseInt(hex, 16, 0)
 				if charMap == nil {
-					returnString += string(rune(c))
+					returnBuffer.WriteRune(rune(c))
 				} else {
-					returnString += string(
+					returnBuffer.WriteRune(
 						charMap.DecodeByte(byte(c)))
 				}
 			}
-		} else if tchar != "" {
-			if curskip > 0 {
-				curskip -= 1
-			} else if !ignorable {
-				returnString += tchar
-			}
 		}
 	}
-	return returnString
+	return returnBuffer.String()
 }
